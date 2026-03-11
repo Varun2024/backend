@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@types/node": "^25.4.0"
+  },
+  "scripts": {
+    "start": "node --watch index.js"
+  }
+}
