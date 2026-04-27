@@ -1,0 +1,10 @@
+services:
+  postgres:
+    image : postgres:18.3
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: myORM
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
