@@ -1,5 +1,5 @@
+require("dotenv").config();
 const express = require("express");
-
 const { logger } = require("./middleware/logger");
 const app = express();
 const PORT = 8000;
