@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: auth_db
+    ports:
+    # on the host machine,inside the container
+      - "5432:5432"
+    # volumes are used to persist data, so that even if the container is stopped or removed, the data will still be available
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+volumes :
+  db_data:
