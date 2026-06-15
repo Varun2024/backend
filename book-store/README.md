@@ -1,7 +1,52 @@
 # book-store
 
 Purpose
-: A focused Express app demonstrating a small, testable API for CRUD operations on books. This README defines the project's intent, core concepts to revisit, and concrete ways to rehearse them.
+: A focused Express app demonstrating a small, testable API for CRUD on **books** and **authors**, backed by **PostgreSQL via Drizzle ORM**. This README defines the project's intent, the current API surface, setup, key concepts, and a running mistakes log.
+
+## Tech stack
+
+- **Runtime / framework:** Node.js + Express 5 (CommonJS)
+- **Database:** PostgreSQL 18 (via `docker-compose.yml`)
+- **ORM / migrations:** Drizzle ORM + `drizzle-kit`
+- **Config:** `dotenv`
+- **Dev:** `node --watch index.js`
+
+## Setup
+
+```bash
+# 1. Start Postgres
+docker compose up -d        # exposes postgres on :5432, db = bookstore
+
+# 2. Install deps
+npm install
+
+# 3. Configure env — create .env
+echo "DATABASE_URL=postgresql://postgres:admin@localhost:5432/bookstore" > .env
+
+# 4. Push schema to DB
+npx drizzle-kit push
+
+# 5. Run
+npm start                   # node --watch index.js
+```
+
+Server starts on `http://localhost:8000`. Hit `/health` to verify.
+
+## Current API surface
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/health` | Health check |
+| GET | `/books` | List books — supports `?search=<query>` full-text search |
+| GET | `/books/:id` | Fetch a book by id |
+| POST | `/books` | Create a book |
+| DELETE | `/books/:id` | Delete a book by id |
+| GET | `/authors` | List authors |
+| GET | `/authors/:id` | Fetch an author by id |
+| GET | `/authors/:id/books` | List all books by author id |
+| POST | `/authors` | Create an author |
+
+POST bodies must be valid JSON with `Content-Type: application/json` — not a JSON-encoded string. See the mistakes log below for the gotcha.
 
 Key concepts (what to remember)
 - App structure: `index.js` boots the app; routers group endpoints; controllers contain request logic; models handle persistence.
@@ -238,6 +283,69 @@ module.exports = db
 ```
 
 **Takeaway:** Check what a factory function actually returns before destructuring. Drizzle's `drizzle()` returns the db client, not `{ db }`.
+
+### 5. `ilike is not defined` when adding `?search=`
+
+**Symptom:** Implementing full-text search on `/books?search=` blew up with `ReferenceError: ilike is not defined`.
+
+**Root cause:** Used `ilike(...)` in the query without importing it from `drizzle-orm`. Drizzle SQL helpers (`eq`, `ilike`, `or`, `and`, etc.) are *not* globals — each must be explicitly imported.
+
+**Fix:**
+```js
+const { ilike, or } = require("drizzle-orm")
+```
+
+**Takeaway:** Every Drizzle operator needs an explicit import. The error is a plain `ReferenceError`, not a Drizzle-specific message — easy to misread.
+
+### 6. `Failed query: select  from $1` on `/authors`
+
+**Symptom:** `GET /authors` returned `Error: Failed query: select  from $1   params: [object Object]`. Note the empty column list and `$1` placeholder where a table should be.
+
+**Root cause:** Passed the **module export object** to `db.select().from(...)` instead of the actual `pgTable`:
+```js
+const authorsTable = require("../models/author.model")   // WRONG — gets the whole module
+db.select().from(authorsTable)                            // Drizzle binds it as a parameter
+```
+
+**Fix:** Destructure the named export, same root cause family as mistake #1:
+```js
+const { authorsTable } = require("../models/author.model")
+```
+
+**Takeaway:** When Drizzle emits `select  from $1`, it's telling you it received a value it can't recognize as a table — usually a module-shape mistake.
+
+### 7. `Unexpected token '"', "\"{\n  \"fi"... is not valid JSON` on POST `/authors`
+
+**Symptom:** Posting an author body crashed `body-parser`'s JSON parser with `SyntaxError: Unexpected token '"'`. The truncated payload `"{\n  \"fi"...` is the giveaway.
+
+**Root cause:** The client sent a **JSON-encoded string** (the JSON body was wrapped in quotes and re-escaped) instead of a raw JSON object. `express.json()` then tried to parse a string that starts with `"`, which is technically valid JSON (a string literal) but not the object the handler expected — and depending on the client, sometimes ends up double-stringified and fails outright.
+
+**Fix:**
+- Send a raw JSON object, not a stringified one:
+  ```http
+  POST /authors
+  Content-Type: application/json
+
+  { "firstName": "Ada", "lastName": "Lovelace", "email": "ada@x.com" }
+  ```
+- In Postman/Thunder Client, choose **Body → raw → JSON**, not "Text" with a manually quoted JSON string.
+
+**Takeaway:** "Not valid JSON" errors that start with a `"` token almost always mean the body was stringified twice. Check the client's content type and body mode before blaming the server.
+
+### 8. Author POST succeeded but response was unhelpful
+
+**Symptom:** `POST /authors` actually inserted the row, but the response gave the client nothing useful to act on.
+
+**Root cause:** The handler returned a bare success message with no inserted id, so the client couldn't follow up (e.g. fetch the new author or attach books to it).
+
+**Fix:** Use Drizzle's `.returning(...)` to surface the new id and respond with a meaningful payload:
+```js
+const [result] = await db.insert(authorsTable).values({ firstName, lastName, email })
+  .returning({ id: authorsTable.id })
+res.status(201).json({ message: "Author added", id: result.id })
+```
+
+**Takeaway:** Write endpoints assume the next call. A create endpoint should return at least the new resource's id (and ideally the full row) so the client doesn't need a second round-trip to find what it just made.
 
 ### General lessons
 
