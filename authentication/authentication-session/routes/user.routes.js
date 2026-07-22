@@ -3,29 +3,23 @@ import db from "../db/index.js";
 import { usersTable, userSessions } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { randomBytes, createHmac } from "node:crypto";
+import jwt from 'jsonwebtoken'
+import {ensuredAuthenticated} from '../middleware/auth.middleware.js'
 
 const router = express.Router();
 
-router.patch("/", async (req, res) => {
-  const user = req.user;
+router.patch("/", ensuredAuthenticated ,async (req, res) => {
 
-  if (!user) {
-    return res.status(401).json({ error: "You are not logged in" });
-  }
   const { name } = req.body;
   await db.update(usersTable).set({name}).where(eq(usersTable.id,user.id))
   return res.status(200).json({ status: "success"});
 });
 
 // returns current logged in user
-router.get("/", async (req, res) => {
-  const user = req.user;
+router.get("/",ensuredAuthenticated, async (req, res) => {
 
-  if (!user) {
-    return res.status(401).json({ error: "You are not logged in" });
-  }
 
-  return res.status(200).json({ status: "success", data: user });
+  return res.json({ status: "success", data: user });
 });
 
 router.post("/signup", async (req, res) => {
@@ -65,9 +59,11 @@ router.post("/login", async (req, res) => {
   const [existingUser] = await db
     .select({
       id: usersTable.id,
+      name: usersTable.name,
       email: usersTable.email,
       salt: usersTable.salt,
       password: usersTable.password,
+      role:usersTable.role,
     })
     .from(usersTable)
     .where((table) => eq(table.email, email));
@@ -88,16 +84,25 @@ router.post("/login", async (req, res) => {
   }
 
   // generate a session for the user and return it to the client
-  const [session] = await db
-    .insert(userSessions)
-    .values({
-      userId: existingUser.id,
-    })
-    .returning({ id: userSessions.id });
+  // const [session] = await db
+  //   .insert(userSessions)
+  //   .values({
+  //     userId: existingUser.id,
+  //   })
+  //   .returning({ id: userSessions.id });
+
+  const payload = {
+    id: existingUser.id,
+    email: existingUser.email,
+    name: existingUser.name,
+    role:existingUser.role
+  }
+
+  const token = jwt.sign(payload, process.env.JWT_secret)
 
   return res.status(200).json({
-    status: "success",
-    data: { message: "Logged in successfully", sessionId: session.id },
+    status: "success", 
+    data: { message: "Logged in successfully", token },
   });
 });
 
